@@ -1,0 +1,41 @@
+const express = require("express");
+const cors = require("cors");
+const mongoose = require("mongoose");
+const todosRouter = require("./routes/todos");
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+const MONGO_URI =
+  process.env.MONGO_URI || "mongodb://127.0.0.1:27017/todo";
+
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+app.use(express.json());
+
+app.use("/todos", todosRouter);
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+async function startServer() {
+  try {
+    await mongoose.connect(MONGO_URI);
+    console.log("연결 성공");
+
+    app.listen(PORT, () => {
+      console.log(`Todo API running at http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("MongoDB 연결 실패:", error.message);
+    process.exit(1);
+  }
+}
+
+startServer();
