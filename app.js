@@ -1,4 +1,28 @@
-const API_BASE = "http://localhost:5000/todos";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
+import {
+  getDatabase,
+  ref,
+  push,
+  set,
+  update,
+  remove,
+  onValue,
+} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDlweCyqZGo1di9pIC42VA7nWOQ7XRytk8",
+  authDomain: "todo-backend-ab4ae.firebaseapp.com",
+  databaseURL: "https://todo-backend-ab4ae-default-rtdb.firebaseio.com",
+  projectId: "todo-backend-ab4ae",
+  storageBucket: "todo-backend-ab4ae.firebasestorage.app",
+  messagingSenderId: "166883827027",
+  appId: "1:166883827027:web:353f7f4e197afa9efa95a6",
+  measurementId: "G-64QR4MBBPW",
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
+const todosRef = ref(db, "todos");
 
 const STATUS_META = {
   todo: { key: "todo", label: "To do", progress: 0 },
@@ -69,29 +93,6 @@ let currentCategory = "all";
 let detailTodoId = null;
 /** @type {boolean} */
 let isSavingDetail = false;
-
-async function api(path = "", options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
-
-  let data = null;
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    data = await response.json();
-  }
-
-  if (!response.ok) {
-    const message = data?.error || `요청 실패 (${response.status})`;
-    throw new Error(message);
-  }
-
-  return data;
-}
 
 function toDateInputValue(value) {
   if (!value) return "";
@@ -293,38 +294,68 @@ function closeDetailModal() {
   syncBodyScroll();
 }
 
-async function loadTodos() {
-  const data = await api();
-  todos = Array.isArray(data) ? data.map(normalizeTodo) : [];
-  render();
+function subscribeTodos() {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    onValue(
+      todosRef,
+      (snapshot) => {
+        const value = snapshot.val() || {};
+        todos = Object.entries(value)
+          .map(([id, item]) => normalizeTodo({ ...item, id }))
+          .sort((a, b) => {
+            const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return bTime - aTime;
+          });
+        render();
+
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      },
+      (error) => {
+        if (!settled) {
+          settled = true;
+          reject(error);
+          return;
+        }
+        console.error(error);
+      }
+    );
+  });
 }
 
 async function addTodo(title, dueDate, category = "personal", memo = "") {
+  const newRef = push(todosRef);
   const payload = {
     title,
     status: "todo",
+    completed: false,
     category,
     memo: memo.trim(),
+    dueDate: dueDate || null,
+    createdAt: new Date().toISOString(),
   };
-  if (dueDate) payload.dueDate = dueDate;
 
-  const created = await api("", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  todos.unshift(normalizeTodo(created));
-  render();
+  await set(newRef, payload);
 }
 
 async function updateTodo(id, updates) {
-  const updated = await api(`/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-  const normalized = normalizeTodo(updated, updates);
-  todos = todos.map((todo) => (todo.id === id ? normalized : todo));
-  render();
-  return normalized;
+  const patch = { ...updates };
+  if (patch.status !== undefined) {
+    patch.completed = patch.status === "done";
+  }
+  if (patch.dueDate === "") {
+    patch.dueDate = null;
+  }
+
+  await update(ref(db, `todos/${id}`), patch);
+
+  const current = todos.find((todo) => todo.id === id) || { id };
+  return normalizeTodo({ ...current, ...patch, id });
 }
 
 async function moveTodo(id, status) {
@@ -358,13 +389,11 @@ async function deleteTodo(id) {
 
   const removeItem = async () => {
     try {
-      await api(`/${id}`, { method: "DELETE" });
-      todos = todos.filter((todo) => todo.id !== id);
+      await remove(ref(db, `todos/${id}`));
       if (detailTodoId === id) {
         isSavingDetail = false;
         closeDetailModal();
       }
-      render();
     } catch (error) {
       console.error(error);
       alert(`할일을 삭제하지 못했습니다.\n${error.message}`);
@@ -768,11 +797,11 @@ form.addEventListener("submit", async (event) => {
 
 async function init() {
   try {
-    await loadTodos();
+    await subscribeTodos();
   } catch (error) {
     console.error(error);
     alert(
-      `할일 목록을 불러오지 못했습니다.\n백엔드(http://localhost:5000)가 실행 중인지 확인해 주세요.\n${error.message}`
+      `할일 목록을 불러오지 못했습니다.\nFirebase Realtime Database가 활성화되어 있는지, 읽기/쓰기 규칙을 확인해 주세요.\n${error.message}`
     );
     render();
   }
